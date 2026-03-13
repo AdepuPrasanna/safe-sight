@@ -1,73 +1,106 @@
-# Welcome to your Lovable project
+# SafeSight – Deep Fake & Sensitive Image Detection System
 
-## Project info
+## Project Overview
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+SafeSight is an AI-powered web application that detects whether an uploaded image is **AI-generated (deepfake) or a real human image** and also checks if the image contains **sensitive or harmful content** such as violence, adult content, or harassment.
 
-## How can I edit this code?
+The system helps prevent harmful or misleading images from being uploaded to online platforms.
 
-There are several ways of editing your application.
+---
 
-**Use Lovable**
+## Features
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+* **Deep Fake Detection** – Identifies whether an image is AI-generated or real.
+* **Sensitive Content Detection** – Detects adult, violent, or inappropriate images.
+* **Image Upload Interface** – Users can upload images easily through the web interface.
+* **Real-Time Analysis** – The system analyzes images instantly and returns results.
+* **Confidence Score** – Displays AI detection confidence levels.
 
-Changes made via Lovable will be committed automatically to this repo.
+---
 
-**Use your preferred IDE**
+## Technologies Used
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+* Frontend: React + TypeScript
+* Build Tool: Vite
+* UI Framework: Tailwind CSS + shadcn-ui
+* Backend: Supabase Edge Functions
+* Image Analysis: Google Cloud Vision API
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+---
 
-Follow these steps:
+## Project Architecture
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+1. User uploads an image through the web interface.
+2. The image is sent to a backend Edge Function.
+3. The backend calls Google Cloud Vision API for:
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+   * SafeSearch detection (sensitive content)
+   * Label detection (AI generation heuristic)
+4. The system returns:
 
-# Step 3: Install the necessary dependencies.
-npm i
+   * AI Generated / Real Image
+   * Confidence Score
+   * Sensitive Content Warning
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+---
+
+## Installation & Setup
+
+### 1. Clone the repository
+
+```
+git clone <YOUR_GITHUB_REPO_URL>
+```
+
+### 2. Navigate to the project directory
+
+```
+cd safe-sight
+```
+
+### 3. Install dependencies
+
+```
+npm install
+```
+
+### 4. Start the development server
+
+```
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Open the application in your browser:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```
+http://localhost:8080
+```
 
-**Use GitHub Codespaces**
+---
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Environment Variables
 
-## What technologies are used for this project?
+Create a `.env` file and add:
 
-This project is built with:
+```
+VITE_SUPABASE_PROJECT_ID=your_project_id
+VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
+VITE_SUPABASE_URL=your_supabase_url
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+---
 
-## How can I deploy this project?
+## Future Improvements
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+* Integrate a **real deepfake detection ML model**
+* Improve AI detection accuracy
+* Add video deepfake detection
+* Add user authentication
+* Build an admin moderation dashboard
 
-## Can I connect a custom domain to my Lovable project?
+---
 
-Yes, you can!
+## Author
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Adepu Prasanna
+B.Tech – Computer Science Engineering
