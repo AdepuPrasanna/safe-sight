@@ -115,7 +115,16 @@ export default function Index() {
             </Button>
           )}
 
-          {/* Blocked Alert */}
+          {/* AI Blocked Alert */}
+          {aiBlocked && (
+            <AiBlockedAlert
+              message={aiBlocked.message}
+              reasoning={aiBlocked.reasoning}
+              onDismiss={handleClear}
+            />
+          )}
+
+          {/* Sensitive Content Blocked Alert */}
           {blocked && <SensitiveContentAlert onDismiss={handleClear} />}
 
           {/* Results */}
