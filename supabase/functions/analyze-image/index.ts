@@ -6,13 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-/**
- * Analyzes an image using Google Cloud Vision API for:
- * 1. SafeSearch detection (sensitive content)
- * 2. Label detection (used as heuristic for AI-generated detection)
- */
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -23,6 +17,11 @@ serve(async (req) => {
       throw new Error("GOOGLE_CLOUD_VISION_API_KEY is not configured");
     }
 
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
+    }
+
     const { image } = await req.json();
     if (!image) {
       return new Response(JSON.stringify({ error: "No image provided" }), {
@@ -31,73 +30,105 @@ serve(async (req) => {
       });
     }
 
-    // Call Google Cloud Vision API
-    const visionUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_CLOUD_VISION_API_KEY}`;
-
-    const visionResponse = await fetch(visionUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        requests: [
-          {
+    // Run Vision API (SafeSearch) and Gemini AI detection in parallel
+    const [visionResult, aiResult] = await Promise.all([
+      // 1. Google Cloud Vision for SafeSearch
+      fetch(`https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_CLOUD_VISION_API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requests: [{
             image: { content: image },
             features: [
               { type: "SAFE_SEARCH_DETECTION" },
-              { type: "LABEL_DETECTION", maxResults: 15 },
+              { type: "LABEL_DETECTION", maxResults: 10 },
             ],
-          },
-        ],
+          }],
+        }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(`Vision API error: ${await r.text()}`);
+        return r.json();
       }),
-    });
 
-    if (!visionResponse.ok) {
-      const errBody = await visionResponse.text();
-      throw new Error(`Vision API error [${visionResponse.status}]: ${errBody}`);
-    }
+      // 2. Gemini for AI-generated detection
+      fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Analyze this image and determine if it is AI-generated (by tools like DALL-E, Midjourney, Stable Diffusion, ChatGPT, etc.) or a real photograph taken by a camera.
 
-    const visionData = await visionResponse.json();
-    const annotation = visionData.responses?.[0];
+Look for these AI-generation indicators:
+- Unnatural skin textures, overly smooth or plastic-looking skin
+- Inconsistent lighting or shadows
+- Warped or malformed hands, fingers, ears, teeth
+- Symmetric perfection that looks uncanny
+- Blurred or nonsensical background details
+- Text that is garbled or doesn't make sense
+- Overly saturated or hyper-realistic quality
+- Repetitive patterns or textures
+- Lack of natural imperfections
 
-    if (!annotation) {
-      throw new Error("No response from Vision API");
-    }
+Respond with ONLY a JSON object (no markdown, no code fences):
+{"isAiGenerated": true/false, "confidence": 0-100, "reasoning": "brief explanation"}`
+                },
+                {
+                  type: "image_url",
+                  image_url: { url: `data:image/jpeg;base64,${image}` }
+                }
+              ]
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 300,
+        }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(`AI Gateway error: ${await r.text()}`);
+        return r.json();
+      }),
+    ]);
 
-    // Extract SafeSearch results
+    // Parse Vision API results
+    const annotation = visionResult.responses?.[0];
+    if (!annotation) throw new Error("No response from Vision API");
+
     const safeSearch = annotation.safeSearchAnnotation || {};
     const adult = safeSearch.adult || "UNKNOWN";
     const violence = safeSearch.violence || "UNKNOWN";
     const racy = safeSearch.racy || "UNKNOWN";
     const medical = safeSearch.medical || "UNKNOWN";
 
-    // Determine if sensitive: block if any category is LIKELY or VERY_LIKELY
     const highRisk = ["LIKELY", "VERY_LIKELY"];
     const isSensitive =
       highRisk.includes(adult) ||
       highRisk.includes(violence) ||
       highRisk.includes(racy);
 
-    // Extract labels
     const labels: string[] = (annotation.labelAnnotations || []).map(
       (l: { description: string }) => l.description
     );
 
-    // Heuristic AI detection: check for labels suggesting AI generation
-    const aiKeywords = [
-      "artificial intelligence", "ai generated", "computer generated",
-      "digital art", "cgi", "3d rendering", "synthetic", "generated",
-      "deepfake", "neural network", "machine learning",
-      "illustration", "graphic design", "render",
-    ];
-
-    const matchedAiLabels = labels.filter((l) =>
-      aiKeywords.some((kw) => l.toLowerCase().includes(kw))
-    );
-
-    // Also check for very high-quality "perfect" images — common in AI art
-    const isAiGenerated = matchedAiLabels.length >= 1;
-    const aiConfidence = isAiGenerated
-      ? Math.min(95, 60 + matchedAiLabels.length * 15)
-      : Math.max(10, 85 - labels.length * 2);
+    // Parse Gemini AI detection result
+    let isAiGenerated = false;
+    let aiConfidence = 50;
+    try {
+      const aiContent = aiResult.choices?.[0]?.message?.content || "";
+      const cleaned = aiContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const parsed = JSON.parse(cleaned);
+      isAiGenerated = parsed.isAiGenerated === true;
+      aiConfidence = Math.max(0, Math.min(100, parsed.confidence || 50));
+    } catch (e) {
+      console.error("Failed to parse AI detection response:", e);
+    }
 
     const result = {
       isAiGenerated,
