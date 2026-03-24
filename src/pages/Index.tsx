@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import ImageUploader from "@/components/ImageUploader";
 import ResultsDashboard, { type AnalysisResult } from "@/components/ResultsDashboard";
 import SensitiveContentAlert from "@/components/SensitiveContentAlert";
+import AiBlockedAlert from "@/components/AiBlockedAlert";
 import { analyzeImage } from "@/lib/analyzeImage";
 import { toast } from "sonner";
 
@@ -16,12 +17,14 @@ export default function Index() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [blocked, setBlocked] = useState(false);
+  const [aiBlocked, setAiBlocked] = useState<{ message?: string; reasoning?: string } | null>(null);
 
   const handleImageSelect = (selectedFile: File, previewUrl: string) => {
     setFile(selectedFile);
     setPreview(previewUrl);
     setResult(null);
     setBlocked(false);
+    setAiBlocked(null);
   };
 
   const handleClear = () => {
@@ -29,6 +32,7 @@ export default function Index() {
     setPreview(null);
     setResult(null);
     setBlocked(false);
+    setAiBlocked(null);
   };
 
   const handleAnalyze = async () => {
@@ -36,12 +40,20 @@ export default function Index() {
     setIsAnalyzing(true);
     setResult(null);
     setBlocked(false);
+    setAiBlocked(null);
 
     try {
       const analysisResult = await analyzeImage(file);
 
-      if (analysisResult.isSensitive) {
-        setBlocked(true);
+      if (!analysisResult.uploadAllowed) {
+        if (analysisResult.isAiGenerated) {
+          setAiBlocked({
+            message: analysisResult.message,
+            reasoning: analysisResult.reasoning,
+          });
+        } else {
+          setBlocked(true);
+        }
         setPreview(null);
         setFile(null);
       } else {
@@ -103,7 +115,16 @@ export default function Index() {
             </Button>
           )}
 
-          {/* Blocked Alert */}
+          {/* AI Blocked Alert */}
+          {aiBlocked && (
+            <AiBlockedAlert
+              message={aiBlocked.message}
+              reasoning={aiBlocked.reasoning}
+              onDismiss={handleClear}
+            />
+          )}
+
+          {/* Sensitive Content Blocked Alert */}
           {blocked && <SensitiveContentAlert onDismiss={handleClear} />}
 
           {/* Results */}

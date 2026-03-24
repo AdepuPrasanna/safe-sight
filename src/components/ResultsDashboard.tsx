@@ -7,6 +7,12 @@ export interface AnalysisResult {
   isAiGenerated: boolean;
   /** Confidence score 0-100 */
   aiConfidence: number;
+  /** AI reasoning explanation */
+  reasoning?: string;
+  /** Whether upload is allowed */
+  uploadAllowed: boolean;
+  /** Message from backend */
+  message?: string;
   /** Whether sensitive content was detected */
   isSensitive: boolean;
   /** Individual sensitive content categories */
@@ -18,6 +24,8 @@ export interface AnalysisResult {
   };
   /** Labels detected in the image */
   labels: string[];
+  /** Whether keyword matching triggered */
+  keywordMatch?: boolean;
 }
 
 interface ResultsDashboardProps {
