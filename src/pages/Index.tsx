@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import ImageUploader from "@/components/ImageUploader";
 import ResultsDashboard, { type AnalysisResult } from "@/components/ResultsDashboard";
 import SensitiveContentAlert from "@/components/SensitiveContentAlert";
+import AiBlockedAlert from "@/components/AiBlockedAlert";
 import { analyzeImage } from "@/lib/analyzeImage";
 import { toast } from "sonner";
 
