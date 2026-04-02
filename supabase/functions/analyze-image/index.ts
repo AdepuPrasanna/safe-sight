@@ -25,10 +25,7 @@ serve(async (req) => {
   }
 
   try {
-    const GOOGLE_CLOUD_VISION_API_KEY = Deno.env.get("GOOGLE_CLOUD_VISION_API_KEY");
-    if (!GOOGLE_CLOUD_VISION_API_KEY) {
-      throw new Error("GOOGLE_CLOUD_VISION_API_KEY is not configured");
-    }
+    const GOOGLE_CLOUD_VISION_API_KEY = Deno.env.get("GOOGLE_CLOUD_VISION_API_KEY") || "";
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
@@ -43,7 +40,7 @@ serve(async (req) => {
       });
     }
 
-    // Run Vision API and Gemini AI detection in parallel
+    // Run Vision API and Gemini AI detection in parallel (Vision is optional)
     const [visionResult, aiResult] = await Promise.all([
       fetch(`https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_CLOUD_VISION_API_KEY}`, {
         method: "POST",
@@ -58,8 +55,14 @@ serve(async (req) => {
           }],
         }),
       }).then(async (r) => {
-        if (!r.ok) throw new Error(`Vision API error: ${await r.text()}`);
+        if (!r.ok) {
+          console.warn(`Vision API failed: ${r.status}`);
+          return null;
+        }
         return r.json();
+      }).catch((e) => {
+        console.warn("Vision API error:", e);
+        return null;
       }),
 
       fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -73,41 +76,34 @@ serve(async (req) => {
           messages: [
             {
               role: "system",
-              content: `You are an expert forensic image analyst specializing in detecting AI-generated images. You have extensive experience identifying outputs from DALL-E 3, ChatGPT image generation, Midjourney, Stable Diffusion, Flux, and other generative AI tools. You ALWAYS err on the side of flagging images as AI-generated. When in doubt, flag it as AI. Modern AI generators produce extremely realistic images, so you must be extremely vigilant and suspicious.`
+              content: `You are an expert forensic image analyst specializing in detecting AI-generated images. You have extensive experience identifying outputs from DALL-E 3, ChatGPT image generation, Midjourney, Stable Diffusion, Flux, and other generative AI tools.`
             },
             {
               role: "user",
               content: [
                 {
                   type: "text",
-                  text: `Analyze this image with EXTREME suspicion. Your default assumption should be that the image IS AI-generated unless you find overwhelming evidence it is a real photograph.
+                  text: `Analyze this image carefully to determine if it is AI-generated or a real photograph.
 
-CRITICAL RULES:
-- If there is ANY doubt, classify as AI-generated
-- Modern AI (ChatGPT/DALL-E 3, Midjourney v6+) produces EXTREMELY realistic images
-- Do NOT be fooled by realistic appearance - dig deeper
-- A confidence of 50% or higher = AI-generated
+Look for these AI-GENERATED indicators:
+1. Unnaturally perfect textures, skin, hair
+2. Smooth/circular bokeh patterns
+3. Perfect lighting in casual scenes
+4. Lack of natural camera sensor noise/grain
+5. Background elements that dissolve or look abstract
+6. Subtle anatomical issues (hands, fingers, teeth)
+7. Overly vivid/saturated colors
+8. "Too perfect" composition
 
-AI-GENERATED indicators (even ONE weak indicator means AI-generated):
-1. PERFECTION: Any unnaturally perfect textures, fur, skin, hair - too clean, too uniform
-2. BOKEH: Smooth or circular bokeh patterns
-3. LIGHTING: Perfect golden hour or studio-quality lighting in casual scenes
-4. COMPOSITION: Well-centered subject, ideal framing
-5. EYES: Clear/bright/perfect eyes, especially in animals
-6. DEPTH OF FIELD: Smooth background blur
-7. TEXTURES: Any ground/surface textures that look slightly off
-8. ANATOMY: Any subtle anatomical issues
-9. COLORS: Vivid, saturated, or warm color grading
-10. OVERALL FEEL: Image looks "too good", "too cute", "too perfect"
-11. NOISE: Lack of natural camera sensor noise/grain
-12. DETAILS: Background elements that dissolve or look abstract
-13. STYLE: Looks like stock photography, professional render, or digital art
-14. METADATA: Any visual watermark patterns from AI tools
-
-IMPORTANT: If the image has a "professional stock photo" quality or looks like it could be from an AI art portfolio, it IS AI-generated. Real casual photos have visible imperfections, noise, and imperfect composition.
+Also look for REAL photograph indicators:
+1. Natural sensor noise/grain
+2. Imperfect composition
+3. Natural skin texture with pores
+4. Realistic lighting inconsistencies
+5. Natural motion blur or focus issues
 
 Respond with ONLY a JSON object (no markdown, no code fences):
-{"isAiGenerated": true/false, "confidence": 0-100, "reasoning": "brief explanation"}`
+{"isAiGenerated": true/false, "confidence": 0-100, "reasoning": "brief explanation", "safeSearch": {"adult": "UNLIKELY", "violence": "UNLIKELY", "racy": "UNLIKELY"}}`
                 },
                 {
                   type: "image_url",
@@ -125,11 +121,19 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       }),
     ]);
 
-    // Parse Vision API results
-    const annotation = visionResult.responses?.[0];
-    if (!annotation) throw new Error("No response from Vision API");
+    // Parse Vision API results (may be null if API is unavailable)
+    const annotation = visionResult?.responses?.[0];
 
-    const safeSearch = annotation.safeSearchAnnotation || {};
+    let safeSearch: Record<string, string> = {};
+    let labels: string[] = [];
+
+    if (annotation) {
+      safeSearch = annotation.safeSearchAnnotation || {};
+      labels = (annotation.labelAnnotations || []).map(
+        (l: { description: string }) => l.description
+      );
+    }
+
     const adult = safeSearch.adult || "UNKNOWN";
     const violence = safeSearch.violence || "UNKNOWN";
     const racy = safeSearch.racy || "UNKNOWN";
@@ -140,10 +144,6 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       highRisk.includes(adult) ||
       highRisk.includes(violence) ||
       highRisk.includes(racy);
-
-    const labels: string[] = (annotation.labelAnnotations || []).map(
-      (l: { description: string }) => l.description
-    );
 
     // Count AI-related and real-world keyword matches
     const labelsLower = labels.map((l) => l.toLowerCase());
@@ -156,6 +156,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
     let geminiDetected = false;
     let aiConfidence = 30;
     let reasoning = "";
+    let geminiSafeSearch: Record<string, string> = {};
     try {
       const aiContent = aiResult.choices?.[0]?.message?.content || "";
       const cleaned = aiContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -163,6 +164,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       geminiDetected = parsed.isAiGenerated === true;
       aiConfidence = Math.max(0, Math.min(100, parsed.confidence || 30));
       reasoning = parsed.reasoning || "";
+      if (parsed.safeSearch) geminiSafeSearch = parsed.safeSearch;
     } catch (e) {
       console.error("Failed to parse AI detection response:", e);
       geminiDetected = false;
@@ -170,9 +172,13 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       reasoning = "Could not parse AI detection response; treating as real.";
     }
 
-    // BALANCED DETECTION:
-    // AI-generated only if: confidence >= 70% OR 2+ AI keyword matches
-    // If real-world labels dominate and confidence < 70%, treat as real
+    // Use Gemini safeSearch as fallback if Vision API was unavailable
+    const finalAdult = adult !== "UNKNOWN" ? adult : (geminiSafeSearch.adult || "UNKNOWN");
+    const finalViolence = violence !== "UNKNOWN" ? violence : (geminiSafeSearch.violence || "UNKNOWN");
+    const finalRacy = racy !== "UNKNOWN" ? racy : (geminiSafeSearch.racy || "UNKNOWN");
+    const finalSensitive = !annotation ? false : isSensitive;
+
+    // BALANCED DETECTION
     let isAiGenerated = false;
     if (aiConfidence >= 70) {
       isAiGenerated = true;
@@ -181,14 +187,12 @@ Respond with ONLY a JSON object (no markdown, no code fences):
     }
 
     const finalConfidence = aiConfidence;
-
-    // Determine if upload is allowed
-    const uploadAllowed = !isAiGenerated && !isSensitive;
+    const uploadAllowed = !isAiGenerated && !finalSensitive;
 
     let message = "";
     if (isAiGenerated) {
       message = "Upload failed: AI-generated images are not allowed.";
-    } else if (isSensitive) {
+    } else if (finalSensitive) {
       message = "Upload failed: Sensitive or harmful content detected.";
     }
 
@@ -198,8 +202,8 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       reasoning,
       uploadAllowed,
       message,
-      isSensitive,
-      sensitiveCategories: { adult, violence, racy, medical },
+      isSensitive: finalSensitive,
+      sensitiveCategories: { adult: finalAdult, violence: finalViolence, racy: finalRacy, medical },
       labels: labels.slice(0, 10),
       keywordMatch,
     };
