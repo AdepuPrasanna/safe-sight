@@ -25,10 +25,7 @@ serve(async (req) => {
   }
 
   try {
-    const GOOGLE_CLOUD_VISION_API_KEY = Deno.env.get("GOOGLE_CLOUD_VISION_API_KEY");
-    if (!GOOGLE_CLOUD_VISION_API_KEY) {
-      throw new Error("GOOGLE_CLOUD_VISION_API_KEY is not configured");
-    }
+    const GOOGLE_CLOUD_VISION_API_KEY = Deno.env.get("GOOGLE_CLOUD_VISION_API_KEY") || "";
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
