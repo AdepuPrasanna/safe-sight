@@ -8,10 +8,15 @@ const corsHeaders = {
 
 const AI_KEYWORDS = [
   "ai generated", "chatgpt", "dall-e", "dall e", "midjourney", "stable diffusion",
-  "synthetic", "digital art", "render", "cgi", "illustration", "generated image",
-  "computer generated", "artificial", "3d render", "digital illustration",
-  "ai art", "generative", "neural", "deepfake", "machine generated",
-  "digitally created", "fantasy", "surreal", "concept art",
+  "synthetic", "cgi", "render", "digital art", "generated image",
+  "computer generated", "3d render", "ai art", "generative", "neural",
+  "deepfake", "machine generated",
+];
+
+const REAL_KEYWORDS = [
+  "person", "face", "human", "skin", "portrait", "photo", "camera",
+  "selfie", "people", "man", "woman", "child", "girl", "boy",
+  "photograph", "snapshot",
 ];
 
 serve(async (req) => {
@@ -140,34 +145,42 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       (l: { description: string }) => l.description
     );
 
-    // Check labels for AI-related keywords
-    const labelsLower = labels.map((l) => l.toLowerCase()).join(" ");
-    const keywordMatch = AI_KEYWORDS.some((kw) => labelsLower.includes(kw));
+    // Count AI-related and real-world keyword matches
+    const labelsLower = labels.map((l) => l.toLowerCase());
+    const labelsJoined = labelsLower.join(" ");
+    const aiMatches = AI_KEYWORDS.filter((kw) => labelsJoined.includes(kw)).length;
+    const realMatches = REAL_KEYWORDS.filter((kw) => labelsLower.some((l) => l.includes(kw))).length;
+    const keywordMatch = aiMatches >= 2;
 
     // Parse Gemini AI detection result
     let geminiDetected = false;
-    let aiConfidence = 50;
+    let aiConfidence = 30;
     let reasoning = "";
     try {
       const aiContent = aiResult.choices?.[0]?.message?.content || "";
       const cleaned = aiContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       const parsed = JSON.parse(cleaned);
       geminiDetected = parsed.isAiGenerated === true;
-      aiConfidence = Math.max(0, Math.min(100, parsed.confidence || 50));
+      aiConfidence = Math.max(0, Math.min(100, parsed.confidence || 30));
       reasoning = parsed.reasoning || "";
     } catch (e) {
       console.error("Failed to parse AI detection response:", e);
-      // On parse failure, err on the side of caution
-      geminiDetected = true;
-      aiConfidence = 75;
-      reasoning = "Could not parse AI detection response; defaulting to AI-generated for safety.";
+      geminiDetected = false;
+      aiConfidence = 30;
+      reasoning = "Could not parse AI detection response; treating as real.";
     }
 
-    // STRICT DETECTION: AI-generated if ANY of these are true
-    const isAiGenerated = geminiDetected || keywordMatch || aiConfidence >= 50;
+    // BALANCED DETECTION:
+    // AI-generated only if: confidence >= 70% OR 2+ AI keyword matches
+    // If real-world labels dominate and confidence < 70%, treat as real
+    let isAiGenerated = false;
+    if (aiConfidence >= 70) {
+      isAiGenerated = true;
+    } else if (keywordMatch && realMatches <= aiMatches) {
+      isAiGenerated = true;
+    }
 
-    // If AI-generated, bump confidence to at least 50
-    const finalConfidence = isAiGenerated ? Math.max(50, aiConfidence) : aiConfidence;
+    const finalConfidence = aiConfidence;
 
     // Determine if upload is allowed
     const uploadAllowed = !isAiGenerated && !isSensitive;
