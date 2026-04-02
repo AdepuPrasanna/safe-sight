@@ -137,15 +137,16 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       );
     }
 
+    const adult = safeSearch.adult || "UNKNOWN";
+    const violence = safeSearch.violence || "UNKNOWN";
+    const racy = safeSearch.racy || "UNKNOWN";
+    const medical = safeSearch.medical || "UNKNOWN";
+
     const highRisk = ["LIKELY", "VERY_LIKELY"];
     const isSensitive =
       highRisk.includes(adult) ||
       highRisk.includes(violence) ||
       highRisk.includes(racy);
-
-    const labels: string[] = (annotation.labelAnnotations || []).map(
-      (l: { description: string }) => l.description
-    );
 
     // Count AI-related and real-world keyword matches
     const labelsLower = labels.map((l) => l.toLowerCase());
@@ -158,6 +159,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
     let geminiDetected = false;
     let aiConfidence = 30;
     let reasoning = "";
+    let geminiSafeSearch: Record<string, string> = {};
     try {
       const aiContent = aiResult.choices?.[0]?.message?.content || "";
       const cleaned = aiContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -165,6 +167,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       geminiDetected = parsed.isAiGenerated === true;
       aiConfidence = Math.max(0, Math.min(100, parsed.confidence || 30));
       reasoning = parsed.reasoning || "";
+      if (parsed.safeSearch) geminiSafeSearch = parsed.safeSearch;
     } catch (e) {
       console.error("Failed to parse AI detection response:", e);
       geminiDetected = false;
@@ -172,9 +175,13 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       reasoning = "Could not parse AI detection response; treating as real.";
     }
 
-    // BALANCED DETECTION:
-    // AI-generated only if: confidence >= 70% OR 2+ AI keyword matches
-    // If real-world labels dominate and confidence < 70%, treat as real
+    // Use Gemini safeSearch as fallback if Vision API was unavailable
+    const finalAdult = adult !== "UNKNOWN" ? adult : (geminiSafeSearch.adult || "UNKNOWN");
+    const finalViolence = violence !== "UNKNOWN" ? violence : (geminiSafeSearch.violence || "UNKNOWN");
+    const finalRacy = racy !== "UNKNOWN" ? racy : (geminiSafeSearch.racy || "UNKNOWN");
+    const finalSensitive = !annotation ? false : isSensitive;
+
+    // BALANCED DETECTION
     let isAiGenerated = false;
     if (aiConfidence >= 70) {
       isAiGenerated = true;
@@ -183,14 +190,12 @@ Respond with ONLY a JSON object (no markdown, no code fences):
     }
 
     const finalConfidence = aiConfidence;
-
-    // Determine if upload is allowed
-    const uploadAllowed = !isAiGenerated && !isSensitive;
+    const uploadAllowed = !isAiGenerated && !finalSensitive;
 
     let message = "";
     if (isAiGenerated) {
       message = "Upload failed: AI-generated images are not allowed.";
-    } else if (isSensitive) {
+    } else if (finalSensitive) {
       message = "Upload failed: Sensitive or harmful content detected.";
     }
 
@@ -200,8 +205,8 @@ Respond with ONLY a JSON object (no markdown, no code fences):
       reasoning,
       uploadAllowed,
       message,
-      isSensitive,
-      sensitiveCategories: { adult, violence, racy, medical },
+      isSensitive: finalSensitive,
+      sensitiveCategories: { adult: finalAdult, violence: finalViolence, racy: finalRacy, medical },
       labels: labels.slice(0, 10),
       keywordMatch,
     };
