@@ -6,21 +6,15 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-/**
- * Analyzes an image using Google Cloud Vision API for:
- * 1. SafeSearch detection (sensitive content)
- * 2. Label detection (used as heuristic for AI-generated detection)
- */
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const GOOGLE_CLOUD_VISION_API_KEY = Deno.env.get("GOOGLE_CLOUD_VISION_API_KEY");
-    if (!GOOGLE_CLOUD_VISION_API_KEY) {
-      throw new Error("GOOGLE_CLOUD_VISION_API_KEY is not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
     }
 
     const { image } = await req.json();
@@ -31,81 +25,81 @@ serve(async (req) => {
       });
     }
 
-    // Call Google Cloud Vision API
-    const visionUrl = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_CLOUD_VISION_API_KEY}`;
+    const systemPrompt = `You are an image analysis AI. Analyze the provided image and return a JSON response with EXACTLY this structure (no markdown, no code fences, just raw JSON):
 
-    const visionResponse = await fetch(visionUrl, {
+{
+  "isAiGenerated": boolean,
+  "aiConfidence": number (0-100),
+  "isSensitive": boolean,
+  "sensitiveCategories": {
+    "adult": "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY",
+    "violence": "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY",
+    "racy": "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY",
+    "medical": "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY"
+  },
+  "labels": ["label1", "label2", ...]
+}
+
+Rules:
+- isAiGenerated: true if image appears AI-generated, synthetic, or a deepfake. Look for telltale signs like unnatural textures, inconsistent lighting, artifacts, too-perfect skin, distorted hands/fingers, blurred backgrounds that don't match, text errors.
+- aiConfidence: your confidence in the isAiGenerated classification (0-100).
+- isSensitive: true ONLY if adult, violence, or racy is LIKELY or VERY_LIKELY.
+- sensitiveCategories: rate each category independently.
+- labels: up to 10 descriptive labels for the image content.
+
+Return ONLY the JSON object, nothing else.`;
+
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
-        requests: [
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
           {
-            image: { content: image },
-            features: [
-              { type: "SAFE_SEARCH_DETECTION" },
-              { type: "LABEL_DETECTION", maxResults: 15 },
+            role: "user",
+            content: [
+              { type: "text", text: "Analyze this image for AI-generation detection and sensitive content." },
+              {
+                type: "image_url",
+                image_url: { url: `data:image/jpeg;base64,${image}` },
+              },
             ],
           },
         ],
       }),
     });
 
-    if (!visionResponse.ok) {
-      const errBody = await visionResponse.text();
-      throw new Error(`Vision API error [${visionResponse.status}]: ${errBody}`);
+    if (!response.ok) {
+      if (response.status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add funds in Settings." }), {
+          status: 402,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const errBody = await response.text();
+      throw new Error(`AI Gateway error [${response.status}]: ${errBody}`);
     }
 
-    const visionData = await visionResponse.json();
-    const annotation = visionData.responses?.[0];
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
 
-    if (!annotation) {
-      throw new Error("No response from Vision API");
+    if (!content) {
+      throw new Error("No response from AI model");
     }
 
-    // Extract SafeSearch results
-    const safeSearch = annotation.safeSearchAnnotation || {};
-    const adult = safeSearch.adult || "UNKNOWN";
-    const violence = safeSearch.violence || "UNKNOWN";
-    const racy = safeSearch.racy || "UNKNOWN";
-    const medical = safeSearch.medical || "UNKNOWN";
-
-    // Determine if sensitive: block if any category is LIKELY or VERY_LIKELY
-    const highRisk = ["LIKELY", "VERY_LIKELY"];
-    const isSensitive =
-      highRisk.includes(adult) ||
-      highRisk.includes(violence) ||
-      highRisk.includes(racy);
-
-    // Extract labels
-    const labels: string[] = (annotation.labelAnnotations || []).map(
-      (l: { description: string }) => l.description
-    );
-
-    // Heuristic AI detection: check for labels suggesting AI generation
-    const aiKeywords = [
-      "artificial intelligence", "ai generated", "computer generated",
-      "digital art", "cgi", "3d rendering", "synthetic", "generated",
-      "deepfake", "neural network", "machine learning",
-      "illustration", "graphic design", "render",
-    ];
-
-    const matchedAiLabels = labels.filter((l) =>
-      aiKeywords.some((kw) => l.toLowerCase().includes(kw))
-    );
-
-    // Also check for very high-quality "perfect" images — common in AI art
-    const isAiGenerated = matchedAiLabels.length >= 1;
-    const aiConfidence = isAiGenerated
-      ? Math.min(95, 60 + matchedAiLabels.length * 15)
-      : Math.max(10, 85 - labels.length * 2);
-
-    const result = {
-      isAiGenerated,
-      aiConfidence,
-      isSensitive,
-      sensitiveCategories: { adult, violence, racy, medical },
-      labels: labels.slice(0, 10),
-    };
+    // Parse JSON from the response, stripping any markdown fences
+    const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const result = JSON.parse(jsonStr);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
