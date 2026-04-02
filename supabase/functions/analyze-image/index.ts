@@ -8,10 +8,15 @@ const corsHeaders = {
 
 const AI_KEYWORDS = [
   "ai generated", "chatgpt", "dall-e", "dall e", "midjourney", "stable diffusion",
-  "synthetic", "digital art", "render", "cgi", "illustration", "generated image",
-  "computer generated", "artificial", "3d render", "digital illustration",
-  "ai art", "generative", "neural", "deepfake", "machine generated",
-  "digitally created", "fantasy", "surreal", "concept art",
+  "synthetic", "cgi", "render", "digital art", "generated image",
+  "computer generated", "3d render", "ai art", "generative", "neural",
+  "deepfake", "machine generated",
+];
+
+const REAL_KEYWORDS = [
+  "person", "face", "human", "skin", "portrait", "photo", "camera",
+  "selfie", "people", "man", "woman", "child", "girl", "boy",
+  "photograph", "snapshot",
 ];
 
 serve(async (req) => {
