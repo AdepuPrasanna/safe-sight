@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 
 export interface AnalysisResult {
   isAiGenerated: boolean;
-  aiConfidence: number;
+  confidence: number;
   isSensitive: boolean;
   sensitiveCategories: {
     adult: string;
@@ -72,9 +72,9 @@ export default function ResultsDashboard({ result }: ResultsDashboardProps) {
           <div className="space-y-1">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Confidence</span>
-              <span className="font-heading font-semibold">{result.aiConfidence}%</span>
+              <span className="font-heading font-semibold">{result.confidence}%</span>
             </div>
-            <Progress value={result.aiConfidence} className="h-2" />
+            <Progress value={result.confidence} className="h-2" />
           </div>
         </CardContent>
       </Card>
