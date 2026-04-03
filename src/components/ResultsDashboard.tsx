@@ -3,28 +3,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 
 export interface AnalysisResult {
-  /** Whether the image is classified as AI-generated */
   isAiGenerated: boolean;
-  /** Confidence score 0-100 */
   aiConfidence: number;
-  /** Whether sensitive content was detected */
   isSensitive: boolean;
-  /** Individual sensitive content categories */
   sensitiveCategories: {
     adult: string;
     violence: string;
     racy: string;
     medical: string;
   };
-  /** Labels detected in the image */
   labels: string[];
+  uploadAllowed: boolean;
+  message: string;
 }
 
 interface ResultsDashboardProps {
   result: AnalysisResult;
 }
 
-/** Maps Vision API likelihood strings to severity levels */
 function likelihoodToLevel(likelihood: string): "safe" | "low" | "medium" | "high" {
   switch (likelihood) {
     case "VERY_LIKELY":
@@ -70,7 +66,7 @@ export default function ResultsDashboard({ result }: ResultsDashboardProps) {
               <CheckCircle2 className="w-6 h-6 text-success" />
             )}
             <span className="text-lg font-heading font-semibold">
-              {result.isAiGenerated ? "AI Generated Image" : "Real Human Image"}
+              {result.message}
             </span>
           </div>
           <div className="space-y-1">

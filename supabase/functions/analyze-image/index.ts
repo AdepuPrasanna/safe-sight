@@ -6,6 +6,16 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const STRONG_AI_KEYWORDS = [
+  "ai generated", "dall-e", "midjourney", "stable diffusion",
+  "synthetic", "cgi", "render", "3d rendering",
+];
+
+const REAL_IMAGE_KEYWORDS = [
+  "person", "face", "human", "portrait", "skin", "photo", "camera",
+  "selfie", "photograph", "people", "man", "woman", "child",
+];
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -17,7 +27,7 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const { image } = await req.json();
+    const { image, mimeType } = await req.json();
     if (!image) {
       return new Response(JSON.stringify({ error: "No image provided" }), {
         status: 400,
@@ -25,11 +35,12 @@ serve(async (req) => {
       });
     }
 
+    const mime = mimeType || "image/jpeg";
+
     const systemPrompt = `You are an image analysis AI. Analyze the provided image and return a JSON response with EXACTLY this structure (no markdown, no code fences, just raw JSON):
 
 {
-  "isAiGenerated": boolean,
-  "aiConfidence": number (0-100),
+  "rawAiConfidence": number (0-100),
   "isSensitive": boolean,
   "sensitiveCategories": {
     "adult": "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY",
@@ -41,11 +52,11 @@ serve(async (req) => {
 }
 
 Rules:
-- isAiGenerated: true if image appears AI-generated, synthetic, or a deepfake. Look for telltale signs like unnatural textures, inconsistent lighting, artifacts, too-perfect skin, distorted hands/fingers, blurred backgrounds that don't match, text errors.
-- aiConfidence: your confidence in the isAiGenerated classification (0-100).
+- rawAiConfidence: your confidence that the image is AI-generated/synthetic/deepfake (0-100). Look for: unnatural textures, inconsistent lighting, artifacts, too-perfect skin, distorted hands/fingers, blurred backgrounds that don't match, text errors, uncanny valley effects.
+- Be conservative: real photographs of people should get LOW rawAiConfidence (under 30). Only give high confidence if you see clear synthetic artifacts.
 - isSensitive: true ONLY if adult, violence, or racy is LIKELY or VERY_LIKELY.
 - sensitiveCategories: rate each category independently.
-- labels: up to 10 descriptive labels for the image content.
+- labels: up to 10 descriptive labels for the image content. Use simple lowercase words.
 
 Return ONLY the JSON object, nothing else.`;
 
@@ -65,7 +76,7 @@ Return ONLY the JSON object, nothing else.`;
               { type: "text", text: "Analyze this image for AI-generation detection and sensitive content." },
               {
                 type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${image}` },
+                image_url: { url: `data:${mime};base64,${image}` },
               },
             ],
           },
@@ -97,9 +108,58 @@ Return ONLY the JSON object, nothing else.`;
       throw new Error("No response from AI model");
     }
 
-    // Parse JSON from the response, stripping any markdown fences
     const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const result = JSON.parse(jsonStr);
+    const raw = JSON.parse(jsonStr);
+
+    // Apply balanced decision logic
+    const labels = (raw.labels || []).map((l: string) => l.toLowerCase());
+    const rawConfidence = raw.rawAiConfidence ?? 50;
+
+    // Count strong AI keyword matches
+    const aiMatches = STRONG_AI_KEYWORDS.filter(kw =>
+      labels.some((l: string) => l.includes(kw))
+    ).length;
+
+    // Check for real image indicators
+    const hasRealIndicators = REAL_IMAGE_KEYWORDS.some(kw =>
+      labels.some((l: string) => l.includes(kw))
+    );
+
+    // Balanced decision: AI only if strong evidence
+    let isAiGenerated = false;
+    let aiConfidence = rawConfidence;
+
+    if (aiMatches >= 2 && rawConfidence >= 70) {
+      isAiGenerated = true;
+      aiConfidence = rawConfidence;
+    } else if (hasRealIndicators) {
+      // Real image indicators present, reduce confidence
+      isAiGenerated = false;
+      aiConfidence = Math.min(rawConfidence, 30);
+    } else if (rawConfidence >= 85 && aiMatches >= 1) {
+      // Very high confidence with at least one AI indicator
+      isAiGenerated = true;
+    } else {
+      isAiGenerated = false;
+      aiConfidence = rawConfidence;
+    }
+
+    const uploadAllowed = !isAiGenerated && !raw.isSensitive;
+    const message = raw.isSensitive
+      ? "Sensitive or harmful content detected"
+      : isAiGenerated
+        ? "Upload failed: AI-generated images are not allowed"
+        : "Real Human Image";
+
+    const result = {
+      isAiGenerated,
+      aiConfidence,
+      isSensitive: raw.isSensitive ?? false,
+      sensitiveCategories: raw.sensitiveCategories,
+      labels: raw.labels || [],
+      uploadAllowed,
+      message,
+    };
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

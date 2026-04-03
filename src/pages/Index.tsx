@@ -7,21 +7,20 @@ import SensitiveContentAlert from "@/components/SensitiveContentAlert";
 import { analyzeImage } from "@/lib/analyzeImage";
 import { toast } from "sonner";
 
-/**
- * Main page: Deep Fake & Sensitive Image Detection System
- */
 export default function Index() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [blocked, setBlocked] = useState(false);
+  const [blockMessage, setBlockMessage] = useState("");
 
   const handleImageSelect = (selectedFile: File, previewUrl: string) => {
     setFile(selectedFile);
     setPreview(previewUrl);
     setResult(null);
     setBlocked(false);
+    setBlockMessage("");
   };
 
   const handleClear = () => {
@@ -29,6 +28,7 @@ export default function Index() {
     setPreview(null);
     setResult(null);
     setBlocked(false);
+    setBlockMessage("");
   };
 
   const handleAnalyze = async () => {
@@ -40,10 +40,13 @@ export default function Index() {
     try {
       const analysisResult = await analyzeImage(file);
 
-      if (analysisResult.isSensitive) {
+      if (!analysisResult.uploadAllowed) {
         setBlocked(true);
-        setPreview(null);
-        setFile(null);
+        setBlockMessage(analysisResult.message);
+        if (analysisResult.isSensitive) {
+          setPreview(null);
+          setFile(null);
+        }
       } else {
         setResult(analysisResult);
       }
@@ -58,7 +61,6 @@ export default function Index() {
   return (
     <div className="min-h-screen bg-background bg-grid-pattern">
       <div className="max-w-2xl mx-auto px-4 py-12">
-        {/* Header */}
         <header className="text-center mb-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 mb-4">
             <ScanEye className="w-4 h-4 text-primary" />
@@ -70,11 +72,10 @@ export default function Index() {
             Deep Fake & Sensitive Image Detection
           </h1>
           <p className="text-muted-foreground max-w-lg mx-auto">
-            Upload an image to detect AI-generated content and check for sensitive or harmful material using Google Cloud Vision.
+            Upload an image to detect AI-generated content and check for sensitive or harmful material.
           </p>
         </header>
 
-        {/* Upload Section */}
         <div className="space-y-4">
           <ImageUploader
             onImageSelect={handleImageSelect}
@@ -103,10 +104,13 @@ export default function Index() {
             </Button>
           )}
 
-          {/* Blocked Alert */}
-          {blocked && <SensitiveContentAlert onDismiss={handleClear} />}
+          {blocked && (
+            <SensitiveContentAlert
+              onDismiss={handleClear}
+              message={blockMessage}
+            />
+          )}
 
-          {/* Results */}
           {result && <ResultsDashboard result={result} />}
         </div>
       </div>
