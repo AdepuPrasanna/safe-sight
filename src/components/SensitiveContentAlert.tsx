@@ -4,10 +4,10 @@ import { Button } from "@/components/ui/button";
 
 interface SensitiveContentAlertProps {
   onDismiss: () => void;
+  message?: string;
 }
 
-/** Alert shown when sensitive/harmful content is detected */
-export default function SensitiveContentAlert({ onDismiss }: SensitiveContentAlertProps) {
+export default function SensitiveContentAlert({ onDismiss, message }: SensitiveContentAlertProps) {
   return (
     <Card className="border-destructive/50 glow-danger bg-destructive/5">
       <CardContent className="p-6 flex flex-col items-center text-center gap-4">
@@ -19,10 +19,7 @@ export default function SensitiveContentAlert({ onDismiss }: SensitiveContentAle
             Upload Blocked
           </h3>
           <p className="text-foreground">
-            Sensitive or harmful images cannot be uploaded on this platform.
-          </p>
-          <p className="text-sm text-muted-foreground mt-2">
-            Our system detected potentially harmful content including harassment, violence, nudity, or other unsafe material.
+            {message || "Sensitive or harmful images cannot be uploaded on this platform."}
           </p>
         </div>
         <Button variant="outline" onClick={onDismiss}>
