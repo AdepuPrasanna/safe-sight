@@ -1,13 +1,20 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { AnalysisResult } from "@/components/ResultsDashboard";
 
-/**
- * Sends an image to the analyze-image edge function.
- * Converts to clean base64 without corruption.
- */
+type RawAnalysisResponse = Partial<AnalysisResult> & {
+  aiConfidence?: number;
+};
+
+const DEFAULT_SENSITIVE_CATEGORIES: AnalysisResult["sensitiveCategories"] = {
+  adult: "VERY_UNLIKELY",
+  violence: "VERY_UNLIKELY",
+  racy: "VERY_UNLIKELY",
+  medical: "VERY_UNLIKELY",
+};
+
 export async function analyzeImage(file: File): Promise<AnalysisResult> {
   const base64 = await fileToBase64(file);
-  const mimeType = file.type === "image/png" ? "image/png" : "image/jpeg";
+  const mimeType = normalizeMimeType(file);
 
   const { data, error } = await supabase.functions.invoke("analyze-image", {
     body: { image: base64, mimeType },
@@ -21,38 +28,58 @@ export async function analyzeImage(file: File): Promise<AnalysisResult> {
     throw new Error(data.error);
   }
 
-  return data as AnalysisResult;
+  const response = (data ?? {}) as RawAnalysisResponse;
+
+  return {
+    isAiGenerated: Boolean(response.isAiGenerated),
+    confidence: typeof response.confidence === "number"
+      ? response.confidence
+      : typeof response.aiConfidence === "number"
+        ? response.aiConfidence
+        : 50,
+    isSensitive: Boolean(response.isSensitive),
+    sensitiveCategories: {
+      ...DEFAULT_SENSITIVE_CATEGORIES,
+      ...(response.sensitiveCategories ?? {}),
+    },
+    labels: Array.isArray(response.labels) ? response.labels : [],
+    uploadAllowed: Boolean(response.uploadAllowed),
+    message: response.message || (response.uploadAllowed
+      ? "Real Human Image"
+      : "Upload failed: AI-generated images are not allowed"),
+  };
 }
 
-function cleanBase64(base64String: string): string {
-  if (!base64String) throw new Error("Empty base64 string");
-  let cleaned = base64String.trim();
-  // Strip data URI prefix if present
-  if (cleaned.includes(",") && cleaned.startsWith("data:")) {
-    cleaned = cleaned.split(",")[1];
+function normalizeMimeType(file: File): "image/jpeg" | "image/png" {
+  if (file.type === "image/png") {
+    return "image/png";
   }
-  // Remove any whitespace
-  cleaned = cleaned.replace(/\s/g, "");
-  // Validate base64 format
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleaned)) {
-    throw new Error("Invalid base64 string after cleaning");
+
+  if (file.type === "image/jpeg" || file.type === "image/jpg") {
+    return "image/jpeg";
   }
-  return cleaned;
+
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "png") {
+    return "image/png";
+  }
+
+  if (extension === "jpg" || extension === "jpeg") {
+    return "image/jpeg";
+  }
+
+  throw new Error("Unsupported file type. Please upload a JPG or PNG image.");
 }
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const result = reader.result as string;
-        const base64 = cleanBase64(result);
-        resolve(base64);
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+
+  return btoa(binary);
 }
