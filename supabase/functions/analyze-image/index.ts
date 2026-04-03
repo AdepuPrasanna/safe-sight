@@ -8,13 +8,49 @@ const corsHeaders = {
 
 const STRONG_AI_KEYWORDS = [
   "ai generated", "dall-e", "midjourney", "stable diffusion",
-  "synthetic", "cgi", "render", "3d rendering",
+  "synthetic", "cgi", "render", "3d render", "3d rendering",
 ];
 
 const REAL_IMAGE_KEYWORDS = [
-  "person", "face", "human", "portrait", "skin", "photo", "camera",
-  "selfie", "photograph", "people", "man", "woman", "child",
+  "person", "face", "human", "portrait", "photo", "camera",
 ];
+
+const DEFAULT_SENSITIVE_CATEGORIES = {
+  adult: "VERY_UNLIKELY",
+  violence: "VERY_UNLIKELY",
+  racy: "VERY_UNLIKELY",
+  medical: "VERY_UNLIKELY",
+} as const;
+
+type RawAnalysis = {
+  rawAiConfidence?: number;
+  anomalyScore?: number;
+  isSensitive?: boolean;
+  sensitiveCategories?: Partial<typeof DEFAULT_SENSITIVE_CATEGORIES>;
+  labels?: string[];
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), max);
+
+const normalizeConfidence = (value: unknown, fallback = 50) => {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return clamp(Math.round(numeric), 0, 100);
+};
+
+const normalizeAnomalyScore = (value: unknown, rawConfidence: number) => {
+  const numeric = typeof value === "number" ? value : Number(value);
+
+  if (Number.isFinite(numeric)) {
+    return clamp(Math.round(numeric), 0, 3);
+  }
+
+  if (rawConfidence >= 85) return 3;
+  if (rawConfidence >= 70) return 2;
+  if (rawConfidence >= 55) return 1;
+  return 0;
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -41,6 +77,7 @@ serve(async (req) => {
 
 {
   "rawAiConfidence": number (0-100),
+  "anomalyScore": number (integer 0-3),
   "isSensitive": boolean,
   "sensitiveCategories": {
     "adult": "VERY_UNLIKELY" | "UNLIKELY" | "POSSIBLE" | "LIKELY" | "VERY_LIKELY",
@@ -53,7 +90,8 @@ serve(async (req) => {
 
 Rules:
 - rawAiConfidence: your confidence that the image is AI-generated/synthetic/deepfake (0-100). Look for: unnatural textures, inconsistent lighting, artifacts, too-perfect skin, distorted hands/fingers, blurred backgrounds that don't match, text errors, uncanny valley effects.
-- Be conservative: real photographs of people should get LOW rawAiConfidence (under 30). Only give high confidence if you see clear synthetic artifacts.
+- anomalyScore: integer 0-3 based on visible AI artifacts. 0 = none, 1 = slight uncertainty, 2 = noticeable anomalies, 3 = obvious synthetic artifacts.
+- Be conservative: real photographs of people should get LOW rawAiConfidence (under 30). Only give high confidence if you see clear synthetic artifacts or strong AI-generation cues.
 - isSensitive: true ONLY if adult, violence, or racy is LIKELY or VERY_LIKELY.
 - sensitiveCategories: rate each category independently.
 - labels: up to 10 descriptive labels for the image content. Use simple lowercase words.
@@ -109,54 +147,116 @@ Return ONLY the JSON object, nothing else.`;
     }
 
     const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const raw = JSON.parse(jsonStr);
+    const raw = JSON.parse(jsonStr) as RawAnalysis;
 
-    // Apply balanced decision logic
-    const labels = (raw.labels || []).map((l: string) => l.toLowerCase());
-    const rawConfidence = raw.rawAiConfidence ?? 50;
+    const labels = Array.isArray(raw.labels)
+      ? raw.labels
+        .map((label) => String(label).trim().toLowerCase())
+        .filter(Boolean)
+      : [];
 
-    // Count strong AI keyword matches
-    const aiMatches = STRONG_AI_KEYWORDS.filter(kw =>
-      labels.some((l: string) => l.includes(kw))
+    const rawConfidence = normalizeConfidence(raw.rawAiConfidence, 50);
+    const anomalyScore = normalizeAnomalyScore(raw.anomalyScore, rawConfidence);
+
+    const aiMatches = STRONG_AI_KEYWORDS.filter((keyword) =>
+      labels.some((label) => label.includes(keyword))
     ).length;
 
-    // Check for real image indicators
-    const hasRealIndicators = REAL_IMAGE_KEYWORDS.some(kw =>
-      labels.some((l: string) => l.includes(kw))
-    );
+    const realMatches = REAL_IMAGE_KEYWORDS.filter((keyword) =>
+      labels.some((label) => label.includes(keyword))
+    ).length;
 
-    // Balanced decision: AI only if strong evidence
+    const hasStrongAiKeyword = aiMatches > 0;
+    const hasRealIndicators = realMatches > 0;
+
+    const aiScore = aiMatches * 2 + anomalyScore;
+    const realScore = realMatches * 2;
+
+    const canOverrideRealPriority = rawConfidence >= 60 || anomalyScore >= 2 || !hasRealIndicators;
+
     let isAiGenerated = false;
-    let aiConfidence = rawConfidence;
+    let decisionReason = "insufficient_ai_evidence";
 
-    if (aiMatches >= 2 && rawConfidence >= 70) {
+    if (aiMatches >= 2) {
       isAiGenerated = true;
-      aiConfidence = rawConfidence;
+      decisionReason = "multiple_ai_matches";
+    } else if (hasStrongAiKeyword && canOverrideRealPriority) {
+      isAiGenerated = true;
+      decisionReason = hasRealIndicators ? "keyword_and_confidence" : "direct_keyword_match";
+    } else if (aiScore > realScore && canOverrideRealPriority) {
+      isAiGenerated = true;
+      decisionReason = "score_based_ai";
     } else if (hasRealIndicators) {
-      // Real image indicators present, reduce confidence
       isAiGenerated = false;
-      aiConfidence = Math.min(rawConfidence, 30);
-    } else if (rawConfidence >= 85 && aiMatches >= 1) {
-      // Very high confidence with at least one AI indicator
-      isAiGenerated = true;
-    } else {
-      isAiGenerated = false;
-      aiConfidence = rawConfidence;
+      decisionReason = "real_priority";
     }
 
-    const uploadAllowed = !isAiGenerated && !raw.isSensitive;
-    const message = raw.isSensitive
-      ? "Sensitive or harmful content detected"
-      : isAiGenerated
-        ? "Upload failed: AI-generated images are not allowed"
-        : "Real Human Image";
+    let confidence = 50;
+
+    if (isAiGenerated) {
+      const highAiEvidence = hasStrongAiKeyword || anomalyScore >= 2 || aiMatches >= 2;
+
+      confidence = highAiEvidence
+        ? clamp(
+          Math.round(
+            72 + (aiMatches * 5) + (anomalyScore * 4) + (Math.max(rawConfidence - 60, 0) * 0.15) - (realMatches * 3),
+          ),
+          70,
+          95,
+        )
+        : clamp(
+          Math.round(
+            48 + (aiMatches * 4) + (anomalyScore * 5) + (Math.max(rawConfidence - 45, 0) * 0.1) - (realMatches * 2),
+          ),
+          40,
+          60,
+        );
+    } else if (hasRealIndicators) {
+      confidence = clamp(
+        Math.round(
+          80 + (realMatches * 4) + (Math.max(55 - rawConfidence, 0) * 0.12) - (aiMatches * 3) - (anomalyScore * 2),
+        ),
+        75,
+        95,
+      );
+    } else {
+      confidence = clamp(
+        Math.round(50 + (realScore * 3) - (aiScore * 2)),
+        40,
+        60,
+      );
+    }
+
+    const uploadAllowed = !(isAiGenerated && confidence >= 65);
+    const message = uploadAllowed
+      ? "Real Human Image"
+      : "Upload failed: AI-generated images are not allowed";
+
+    const sensitiveCategories = {
+      ...DEFAULT_SENSITIVE_CATEGORIES,
+      ...(raw.sensitiveCategories ?? {}),
+    };
+
+    console.log("Detection summary:", JSON.stringify({
+      labels,
+      aiMatches,
+      realMatches,
+      anomalyScore,
+      aiScore,
+      realScore,
+      rawConfidence,
+      confidence,
+      decisionReason,
+      finalDecision: isAiGenerated ? "AI" : "REAL",
+      uploadAllowed,
+    }));
 
     const result = {
       isAiGenerated,
-      aiConfidence,
+      confidence,
       isSensitive: raw.isSensitive ?? false,
-      sensitiveCategories: raw.sensitiveCategories,
-      labels: raw.labels || [],
+      sensitiveCategories,
+      labels,
       uploadAllowed,
       message,
     };

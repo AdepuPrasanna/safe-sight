@@ -29,11 +29,8 @@ export default function ImageUploader({ onImageSelect, preview, onClear, isAnaly
       setError("File too large. Maximum size is 10MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      onImageSelect(file, e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+    const previewUrl = URL.createObjectURL(file);
+    onImageSelect(file, previewUrl);
   }, [onImageSelect]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -53,7 +50,11 @@ export default function ImageUploader({ onImageSelect, preview, onClear, isAnaly
       <Card className="relative overflow-hidden border-primary/30 glow-primary">
         <CardContent className="p-4">
           <div className="relative">
-            <img src={preview} alt="Uploaded preview" className="w-full max-h-80 object-contain rounded-lg" />
+            <img
+              src={preview}
+              alt="Uploaded preview"
+              className="mx-auto block w-full h-auto max-h-80 rounded-lg object-contain"
+            />
             {isAnalyzing && (
               <div className="absolute inset-0 bg-background/60 flex items-center justify-center rounded-lg">
                 <div className="h-1 w-3/4 bg-secondary rounded-full overflow-hidden">

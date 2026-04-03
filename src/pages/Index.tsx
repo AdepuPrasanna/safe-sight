@@ -15,7 +15,14 @@ export default function Index() {
   const [blocked, setBlocked] = useState(false);
   const [blockMessage, setBlockMessage] = useState("");
 
+  const revokePreviewUrl = (url: string | null) => {
+    if (url?.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const handleImageSelect = (selectedFile: File, previewUrl: string) => {
+    revokePreviewUrl(preview);
     setFile(selectedFile);
     setPreview(previewUrl);
     setResult(null);
@@ -24,6 +31,7 @@ export default function Index() {
   };
 
   const handleClear = () => {
+    revokePreviewUrl(preview);
     setFile(null);
     setPreview(null);
     setResult(null);
@@ -39,6 +47,7 @@ export default function Index() {
 
     try {
       const analysisResult = await analyzeImage(file);
+      setResult(analysisResult);
 
       if (!analysisResult.uploadAllowed) {
         setBlocked(true);
@@ -48,7 +57,8 @@ export default function Index() {
           setFile(null);
         }
       } else {
-        setResult(analysisResult);
+        setBlocked(false);
+        setBlockMessage("");
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Analysis failed";
