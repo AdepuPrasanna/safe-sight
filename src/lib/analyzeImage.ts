@@ -24,18 +24,33 @@ export async function analyzeImage(file: File): Promise<AnalysisResult> {
   return data as AnalysisResult;
 }
 
+function cleanBase64(base64String: string): string {
+  if (!base64String) throw new Error("Empty base64 string");
+  let cleaned = base64String.trim();
+  // Strip data URI prefix if present
+  if (cleaned.includes(",") && cleaned.startsWith("data:")) {
+    cleaned = cleaned.split(",")[1];
+  }
+  // Remove any whitespace
+  cleaned = cleaned.replace(/\s/g, "");
+  // Validate base64 format
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleaned)) {
+    throw new Error("Invalid base64 string after cleaning");
+  }
+  return cleaned;
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result as string;
-      // Strip data URL prefix to get raw base64
-      const base64 = result.split(",")[1];
-      if (!base64) {
-        reject(new Error("Failed to convert image to base64"));
-        return;
+      try {
+        const result = reader.result as string;
+        const base64 = cleanBase64(result);
+        resolve(base64);
+      } catch (err) {
+        reject(err);
       }
-      resolve(base64);
     };
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
