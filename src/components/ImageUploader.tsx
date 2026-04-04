@@ -103,8 +103,8 @@ export default function ImageUploader({ onImageSelect, preview, onClear, isAnaly
               Supports JPG, JPEG, PNG • Max 10MB
             </p>
           </div>
-          <Button variant="outline" size="sm" type="button" disabled={isAnalyzing}>
-            Browse Files
+          <Button variant="outline" size="sm" type="button" disabled={isAnalyzing} asChild>
+            <span>Browse Files</span>
           </Button>
           <input
             type="file"
